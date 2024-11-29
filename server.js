@@ -213,7 +213,7 @@ function showEmergencyNotification(data) {
  socket.on('trafficStatus', (data) => {
   const { status, ambulanceId } = data;
 
-  
+   let licensePlate = ambulanceId || connectedUsers[socket.id]?.licensePlate;
       // Log incoming data
       console.log('Received trafficStatus event with data:', data);
 
