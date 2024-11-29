@@ -153,7 +153,7 @@ io.on('connection', (socket) => {
   
   
 
-  let ambulanceLicensePlate = null; 
+ 
 
  // Store ambulance license plate during emergency
  socket.on('emergency', (data) => {
