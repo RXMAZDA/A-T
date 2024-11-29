@@ -165,7 +165,7 @@ io.on('connection', (socket) => {
   });
 
   // Handle traffic status updates
-  s  // Receive traffic status from Traffic Police and forward to the ambulance driver
+  // Receive traffic status from Traffic Police and forward to the ambulance driver
   socket.on('trafficStatus', (data) => {
       const targetSocketId = ambulanceDriverSockets[data.ambulanceLicensePlate];
       if (targetSocketId) {
