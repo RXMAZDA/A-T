@@ -184,6 +184,22 @@ io.on('connection', (socket) => {
       console.error(`Ambulance Driver with ID ${data.ambulanceId} is not connected.`);
     }
   });
+// Function to display the traffic status
+function displayTrafficStatus(status) {
+  const statusElement = document.getElementById('traffic-status');
+  if (statusElement) {
+      statusElement.textContent = `Traffic Status: ${status}`;
+  } else {
+      console.error('Traffic status element not found.');
+  }
+}
+
+// Socket.IO event listener
+const socket = io(); // Ensure the socket instance is initialized
+socket.on('trafficStatusUpdate', (data) => {
+  console.log('Received Traffic Status Update:', data); // Debugging
+  displayTrafficStatus(data.status); // Call function to update the UI
+});
 
   // Update live location for all connected users
   socket.on('updateLocation', (data) => {
