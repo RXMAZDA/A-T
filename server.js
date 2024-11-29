@@ -153,33 +153,33 @@ io.on('connection', (socket) => {
   
   
 
-  // Handle emergency alerts from Ambulance Drivers
-  socket.on('emergency', (data) => {
-    const { licensePlate, location } = data;
-  
-    // Log data for debugging purposes
-    console.log('Emergency data received:', { licensePlate, location });
-  
-    // Find the nearest Traffic Police
-    const nearestPolice = Object.values(connectedUsers).find(
-      (user) => user.role === 'Traffic Police'
-    );
-  
-    if (nearestPolice) {
-      // Send the emergency alert to the nearest Traffic Police
-      nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
-      console.log('Emergency alert sent to Traffic Police:', nearestPolice.name);
-      
-      // Notify the Ambulance Driver of the Traffic Police location (if needed)
-      socket.emit('policeLocation', {
-        lat: nearestPolice.lat,
-        lon: nearestPolice.lon,
-      });
-    } else {
-      console.error('No Traffic Police available to handle the emergency.');
-      socket.emit('noPoliceAvailable', 'No Traffic Police available to handle the emergency.');
-    }
-  });
+  let ambulanceLicensePlate = null; 
+
+ // Store ambulance license plate during emergency
+ socket.on('emergency', (data) => {
+  const { licensePlate, location } = data;
+
+  // Store the license plate with the user's socket data
+  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
+    connectedUsers[socket.id].licensePlate = licensePlate;  // Store license plate with socket
+  }
+
+  const nearestPolice = Object.values(connectedUsers).find(
+    (user) => user.role === 'Traffic Police'
+  );
+
+  if (nearestPolice) {
+    nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
+
+    // Notify the Ambulance Driver of the nearest Traffic Police location
+    socket.emit('policeLocation', {
+      lat: nearestPolice.lat,
+      lon: nearestPolice.lon,
+    });
+  } else {
+    console.error('No Traffic Police available to handle the emergency.');
+  }
+});
 
   // Client-side (Traffic Police) listening for the emergency alert
 socket.on('emergencyAlert', (data) => {
@@ -195,41 +195,32 @@ function showEmergencyNotification(data) {
 }
 
 
-  //traffic status 
-  socket.on('trafficStatus', (data) => {
-    const { ambulanceLicensePlate, status } = data;
-  
-    if (!ambulanceLicensePlate) {
-      console.error('Missing ambulance license plate in trafficStatus event');
-      return;
-    }
-    console.log('Connected Users:', connectedUsers);  // Log all connected users to see the structure
-    const targetSocketId = Object.keys(connectedUsers).find(
-      (socketId) => connectedUsers[socketId].role === 'Ambulance Driver' && 
-      connectedUsers[socketId].licensePlate === ambulanceLicensePlate
-    );
-  
-    if (targetSocketId) {
-      io.to(targetSocketId).emit('trafficStatusUpdate', { status });
-      console.log(`Traffic status sent to ambulance with license plate ${ambulanceLicensePlate}`);
-    } else {
-      console.error(`Ambulance Driver with license plate ${ambulanceLicensePlate} is not connected.`);
-    }
-  });
-  
-// Function to display the traffic status
-function displayTrafficStatus(status) {
-  const statusElement = document.getElementById('traffic-status');
-  if (statusElement) {
-      statusElement.textContent = `Traffic Status: ${status}`;
+ // Handle trafficStatus event
+ socket.on('trafficStatus', (data) => {
+  const status = data.status;
+
+  // Find the socket ID of the ambulance using the stored license plate
+  const targetSocketId = Object.keys(connectedUsers).find(
+    (socketId) => connectedUsers[socketId].role === 'Ambulance Driver' && 
+    connectedUsers[socketId].licensePlate === data.licensePlate  // Use the plate number in the event
+  );
+
+  if (targetSocketId) {
+    io.to(targetSocketId).emit('trafficStatusUpdate', { status });
+    console.log(`Traffic status sent to ambulance with license plate ${data.licensePlate}`);
   } else {
-      console.error('Traffic status element not found.');
+    console.error(`Ambulance Driver with license plate ${data.licensePlate} is not connected.`);
   }
-}
-// Ensure the socket instance is initialized
-socket.on('trafficStatusUpdate', (data) => {
-  console.log('Received Traffic Status Update:', data); // Debugging
-  displayTrafficStatus(data.status); // Call function to update the UI
+});
+
+  
+
+ // Reset the ambulance license plate after traffic status update
+ socket.on('trafficStatusUpdate', () => {
+  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
+    delete connectedUsers[socket.id].licensePlate;  // Remove the license plate after status update
+    console.log('Ambulance license plate has been reset.');
+  }
 });
 
 // Update live location for all connected users
@@ -248,7 +239,6 @@ socket.on('updateLocation', (data) => {
     });
   }
 });
-
      // Handle driver disconnection
     socket.on('disconnect', () => {
         for (const [licensePlate, id] of Object.entries(ambulanceDriverSockets)) {
