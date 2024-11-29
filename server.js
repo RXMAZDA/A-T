@@ -151,17 +151,14 @@ io.on('connection', (socket) => {
     }
   });
   
-  
-
- 
-
  // Store ambulance license plate during emergency
  socket.on('emergency', (data) => {
   const { licensePlate, location } = data;
-
+  console.log(`Emergency received with license plate: ${licensePlate}`);
   // Store the license plate with the user's socket data
   if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
     connectedUsers[socket.id].licensePlate = licensePlate;  // Store license plate with socket
+    console.log(`Stored license plate for Ambulance Driver: ${licensePlate}`);
   }
 
   const nearestPolice = Object.values(connectedUsers).find(
@@ -198,8 +195,15 @@ function showEmergencyNotification(data) {
  // Handle trafficStatus event
  socket.on('trafficStatus', (data) => {
   const status = data.status;
-
-  // Find the socket ID of the ambulance using the stored license plate
+  const licensePlate = data.licensePlate;
+    // Debugging logs
+    console.log('Received trafficStatus event with data:', data);
+    console.log('License plate in trafficStatus:', licensePlate);
+    if (!licensePlate) {
+      console.error('Missing ambulance license plate in trafficStatus event');
+      return; // Exit if license plate is not available
+    }
+    // Find the socket ID of the ambulance using the stored license plate
   const targetSocketId = Object.keys(connectedUsers).find(
     (socketId) => connectedUsers[socketId].role === 'Ambulance Driver' && 
     connectedUsers[socketId].licensePlate === data.licensePlate  // Use the plate number in the event
@@ -244,6 +248,7 @@ socket.on('updateLocation', (data) => {
         for (const [licensePlate, id] of Object.entries(ambulanceDriverSockets)) {
             if (id === socket.id) {
                 console.log(`Ambulance Driver disconnected: ${licensePlate}`);
+                console.log(`User disconnected: ${connectedUsers[socket.id].role} - ${connectedUsers[socket.id].licensePlate || 'No License Plate'}`);
                 delete ambulanceDriverSockets[licensePlate];
             }
         }
