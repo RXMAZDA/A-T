@@ -136,12 +136,12 @@ let connectedUsers = {};  // Store connected users
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Register ambulance driver
+  // Register users (Ambulance Driver, Traffic Police)
   socket.on('registerRole', (data) => {
-      if (data.role === 'Ambulance Driver') {
-          ambulanceDriverSockets[data.licensePlate] = socket.id; // Map license plate to socket.id
-          console.log(`Ambulance Driver registered: ${data.licensePlate}`);
-      }
+    if (data.role === 'Ambulance Driver' || data.role === 'Traffic Police') {
+      connectedUsers[socket.id] = { ...data, socket };  // Add user with role to the connectedUsers object
+      console.log(`${data.role} registered: ${data.name}`);
+    }
   });
 
   // Handle emergency alerts from Ambulance Drivers
@@ -191,22 +191,22 @@ socket.on('trafficStatusUpdate', (data) => {
   displayTrafficStatus(data.status); // Call function to update the UI
 });
 
-  // Update live location for all connected users
-  socket.on('updateLocation', (data) => {
-    const { lat, lon } = data;
-    if (connectedUsers[socket.id]) {
-      connectedUsers[socket.id].lat = lat;
-      connectedUsers[socket.id].lon = lon;
+// Update live location for all connected users
+socket.on('updateLocation', (data) => {
+  const { lat, lon } = data;
+  if (connectedUsers[socket.id]) {
+    connectedUsers[socket.id].lat = lat;
+    connectedUsers[socket.id].lon = lon;
 
-      // Broadcast updated location to all other users
-      socket.broadcast.emit('liveLocationUpdate', {
-        id: socket.id,
-        lat,
-        lon,
-        role: connectedUsers[socket.id].role,
-      });
-    }
-  });
+    // Broadcast updated location to all other users
+    socket.broadcast.emit('liveLocationUpdate', {
+      id: socket.id,
+      lat,
+      lon,
+      role: connectedUsers[socket.id].role,
+    });
+  }
+});
 
      // Handle driver disconnection
     socket.on('disconnect', () => {
