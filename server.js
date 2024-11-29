@@ -155,6 +155,18 @@ io.on('connection', (socket) => {
  socket.on('emergency', (data) => {
   const { licensePlate, location } = data;
 
+
+    // Log incoming data
+    console.log('Emergency received with license plate:', licensePlate);
+
+    if (connectedUsers[socket.id]) {
+      connectedUsers[socket.id].licensePlate = licensePlate;
+      console.log('Updated connectedUsers with license plate:', connectedUsers[socket.id]);
+  } else {
+      console.error('Ambulance Driver not found in connectedUsers for socket ID:', socket.id);
+  }
+
+
   if (!licensePlate) {
     console.error('Emergency event missing license plate.');
     return;
@@ -162,11 +174,7 @@ io.on('connection', (socket) => {
 
 console.log(`Emergency received with license plate: ${licensePlate}`);
 
-// Store the license plate with the user's socket data
-  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
-    connectedUsers[socket.id].licensePlate = licensePlate;  // Store license plate with socket
-    console.log(`Stored license plate for Ambulance Driver: ${licensePlate}`);
-  }
+
 
   const nearestPolice = Object.values(connectedUsers).find(
     (user) => user.role === 'Traffic Police'
@@ -174,8 +182,10 @@ console.log(`Emergency received with license plate: ${licensePlate}`);
 
   if (nearestPolice) {
     nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
+  
+        console.log(`Emergency alert sent to Traffic Police: ${nearestPolice.name}`);
 
-    // Notify the Ambulance Driver of the nearest Traffic Police location
+        // Notify the Ambulance Driver of the nearest Traffic Police location
     socket.emit('policeLocation', {
       lat: nearestPolice.lat,
       lon: nearestPolice.lon,
@@ -203,7 +213,23 @@ function showEmergencyNotification(data) {
  socket.on('trafficStatus', (data) => {
   const { status, ambulanceId } = data;
 
-  let licensePlate = ambulanceId;
+  
+      // Log incoming data
+      console.log('Received trafficStatus event with data:', data);
+
+     // Retrieve the license plate from connectedUsers based on socket ID
+    let licensePlate = ambulanceId || (connectedUsers[socket.id] ? connectedUsers[socket.id].licensePlate : null);
+    
+    if (!licensePlate) {
+      console.error('Missing ambulance license plate in trafficStatus event after retrieval attempt.');
+      console.log('Connected users:', connectedUsers); // Log the current state of connectedUsers
+      return;
+  }
+
+   // Debugging logs
+  console.log('Received trafficStatus event with data:', data);
+  console.log('License plate in trafficStatus:', licensePlate);
+  
 
   if (!ambulanceId) {
       console.error('Missing ambulance license plate in trafficStatus event');
@@ -216,15 +242,6 @@ function showEmergencyNotification(data) {
       }
   }
 
-    
-    if (!licensePlate) {
-      console.error('Missing ambulance license plate in trafficStatus event');
-      return; // Exit if license plate is not available
-    }
-    
-    // Debugging logs
-    console.log('Received trafficStatus event with data:', data);
-    console.log('License plate in trafficStatus:', licensePlate);
     
     // Find the socket ID of the ambulance using the stored license plate
   const targetSocketId = Object.keys(connectedUsers).find(
