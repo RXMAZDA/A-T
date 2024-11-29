@@ -75,10 +75,6 @@ app.post('/login', async (req, res) => {
 app.get('/hospitals', async (req, res) => {
   try {
     const { lat, lon } = req.query;
-    const cacheKey = `hospitals_${lat}_${lon}`;
-    const cachedData = cache.get(cacheKey);
-
-    if (cachedData) return res.status(200).send(cachedData);
 
     const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];node(around:5000,${lat},${lon})[amenity=hospital];out;`;
     const response = await axios.get(overpassUrl, { timeout: 10000 });
@@ -89,12 +85,25 @@ app.get('/hospitals', async (req, res) => {
       lon: el.lon,
     }));
 
-    cache.set(cacheKey, hospitals);
-    res.status(200).send(hospitals);
+    // Add road distance to hospitals
+    const hospitalDistances = await Promise.all(
+      hospitals.map(async (hospital) => {
+        const osrmUrl = `http://router.project-osrm.org/route/v1/driving/${lon},${lat};${hospital.lon},${hospital.lat}?overview=false`;
+        const routeResponse = await axios.get(osrmUrl);
+        const distance = routeResponse.data.routes?.[0]?.distance || Infinity;
+        return { ...hospital, distance };
+      })
+    );
+
+    // Sort by road distance and send response
+    hospitalDistances.sort((a, b) => a.distance - b.distance);
+    res.status(200).send(hospitalDistances);
   } catch (err) {
-    res.status(500).send({ error: 'Error fetching hospitals data' });
+    console.error('Error fetching hospitals:', err.message);
+    res.status(500).send({ error: 'Failed to fetch hospital data' });
   }
 });
+
 
 app.get('/route', async (req, res) => {
   try {
