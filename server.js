@@ -137,6 +137,7 @@ io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
   socket.on('registerRole', (data) => {
+    console.log('Registering user:', data);  // Add this line to see incoming user data
     if (data.role === 'Ambulance Driver') {
       if (data.licensePlate) {
         connectedUsers[socket.id] = { ...data, socket };  // Add Ambulance Driver
@@ -179,7 +180,7 @@ io.on('connection', (socket) => {
       socket.emit('noPoliceAvailable', 'No Traffic Police available to handle the emergency.');
     }
   });
-  
+
   // Client-side (Traffic Police) listening for the emergency alert
 socket.on('emergencyAlert', (data) => {
   console.log('Emergency alert received:', data);
@@ -202,7 +203,7 @@ function showEmergencyNotification(data) {
       console.error('Missing ambulance license plate in trafficStatus event');
       return;
     }
-  
+    console.log('Connected Users:', connectedUsers);  // Log all connected users to see the structure
     const targetSocketId = Object.keys(connectedUsers).find(
       (socketId) => connectedUsers[socketId].role === 'Ambulance Driver' && 
       connectedUsers[socketId].licensePlate === ambulanceLicensePlate
