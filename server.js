@@ -160,12 +160,24 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('trafficStatus', (data) => {
-    console.log(`Traffic status update: ${data}`);
-    // Broadcast the update to the relevant ambulance driver
-    const ambulanceId = data.ambulanceId;
-    io.to(ambulanceId).emit('trafficStatusUpdate', { status: data.status });
+  socket.on('registerRole', (data) => {
+    console.log(`Registering role: ${data.role} for socket ID: ${socket.id}`);
+    if (data.role === 'Ambulance Driver') {
+      ambulanceDriverSockets[data.licensePlate] = socket.id;
+    }
   });
+  
+  socket.on('trafficStatus', (data) => {
+    const targetSocketId = ambulanceDriverSockets[data.ambulanceId];
+    if (targetSocketId) {
+      io.to(targetSocketId).emit('trafficStatusUpdate', { status: data.status });
+      console.log(`Traffic status broadcasted to socket ID: ${targetSocketId}`);
+    } else {
+      console.error('Ambulance Driver not connected or registered.');
+    }
+  });
+  
+  
   
   // Update live location for ambulances or traffic police
   socket.on('updateLocation', (data) => {
