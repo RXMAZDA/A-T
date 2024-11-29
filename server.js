@@ -229,7 +229,7 @@ function showEmergencyNotification(data) {
    // Debugging logs
   console.log('Received trafficStatus event with data:', data);
   console.log('License plate in trafficStatus:', licensePlate);
-  
+
 
   if (!ambulanceId) {
       console.error('Missing ambulance license plate in trafficStatus event');
@@ -243,11 +243,12 @@ function showEmergencyNotification(data) {
   }
 
     
-    // Find the socket ID of the ambulance using the stored license plate
-  const targetSocketId = Object.keys(connectedUsers).find(
-    (socketId) => connectedUsers[socketId].role === 'Ambulance Driver' && 
-    connectedUsers[socketId].licensePlate === data.licensePlate  // Use the plate number in the event
-  );
+     // Find the ambulance driver's socket ID based on the license plate
+    const targetSocketId = Object.keys(connectedUsers).find(
+        (id) =>
+            connectedUsers[id].role === 'Ambulance Driver' &&
+            connectedUsers[id].licensePlate === licensePlate
+    );
 
   if (targetSocketId) {
     io.to(targetSocketId).emit('trafficStatusUpdate', { status });
@@ -258,6 +259,12 @@ function showEmergencyNotification(data) {
 });
 
   
+ // Find the ambulance driver's socket ID based on the license plate
+ const targetSocketId = Object.keys(connectedUsers).find(
+  (id) =>
+      connectedUsers[id].role === 'Ambulance Driver' &&
+      connectedUsers[id].licensePlate === licensePlate
+);
 
  // Reset the ambulance license plate after traffic status update
  socket.on('trafficStatusUpdate', () => {
