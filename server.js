@@ -263,13 +263,6 @@ if (targetSocketId) {
   console.log(`Traffic status sent to ambulance with license plate ${licensePlate}`);
 }
 
- // Reset the ambulance license plate after traffic status update
- socket.on('trafficStatusUpdate', () => {
-  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
-    delete connectedUsers[socket.id].licensePlate;  // Remove the license plate after status update
-    console.log('Ambulance license plate has been reset.');
-  }
-});
 
 socket.on('sendNotification', (data) => {
   const { licensePlate, phone, message } = data;
