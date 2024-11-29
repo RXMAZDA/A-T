@@ -7,6 +7,7 @@ const dotenv = require('dotenv');
 const NodeCache = require('node-cache');
 const fs = require('fs');
 const path = require('path');
+const ambulanceDriverSockets = {};
 
 // Import the User model
 const User = require('./models/User');
@@ -163,7 +164,9 @@ io.on('connection', (socket) => {
   socket.on('registerRole', (data) => {
     console.log(`Registering role: ${data.role} for socket ID: ${socket.id}`);
     if (data.role === 'Ambulance Driver') {
+      // Store socket ID against the license plate
       ambulanceDriverSockets[data.licensePlate] = socket.id;
+      console.log(`Ambulance Driver registered: ${data.licensePlate} -> ${socket.id}`);
     }
   });
   
@@ -171,11 +174,12 @@ io.on('connection', (socket) => {
     const targetSocketId = ambulanceDriverSockets[data.ambulanceId];
     if (targetSocketId) {
       io.to(targetSocketId).emit('trafficStatusUpdate', { status: data.status });
-      console.log(`Traffic status broadcasted to socket ID: ${targetSocketId}`);
+      console.log(`Traffic status broadcasted to ambulance ID: ${data.ambulanceId}`);
     } else {
-      console.error('Ambulance Driver not connected or registered.');
+      console.error(`Ambulance Driver with ID ${data.ambulanceId} is not connected.`);
     }
   });
+  
   
   
   
@@ -194,12 +198,17 @@ io.on('connection', (socket) => {
     });
   });
 
-  // Handle user disconnection
   socket.on('disconnect', () => {
-    console.log('User disconnected:', socket.id);
-    delete connectedUsers[socket.id];
+    // Find and remove the disconnected socket from the mapping
+    for (const licensePlate in ambulanceDriverSockets) {
+      if (ambulanceDriverSockets[licensePlate] === socket.id) {
+        console.log(`Ambulance Driver disconnected: ${licensePlate}`);
+        delete ambulanceDriverSockets[licensePlate];
+        break;
+      }
+    }
   });
-});
+  ;
 
 // Start the server
 server.listen(PORT, '0.0.0.0', () => {
