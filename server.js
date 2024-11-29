@@ -58,7 +58,7 @@ app.use(
 
 // Routes
 
-// Example route to register a user
+// Route to register a user
 app.post('/register', async (req, res) => {
   try {
     const user = new User(req.body);  // Create a new user instance from the request body
@@ -69,7 +69,7 @@ app.post('/register', async (req, res) => {
   }
 });
 
-// Example route to login a user
+// Route to login a user
 app.post('/login', async (req, res) => {
   try {
     const user = await User.findOne({
@@ -130,16 +130,18 @@ app.get('/route', async (req, res) => {
 });
 
 // Socket.IO Events
-let connectedUsers = {};
+let connectedUsers = {};  // Store connected users
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
+  // Register user role (Ambulance Driver / Traffic Police)
   socket.on('registerRole', (data) => {
     connectedUsers[socket.id] = { ...data, socket };
     console.log(`${data.role} registered: ${data.name}`);
   });
 
+  // Handle emergency alerts from ambulance driver
   socket.on('emergency', (data) => {
     const { licensePlate, location } = data;
     const nearestPolice = Object.values(connectedUsers).find(
@@ -147,11 +149,49 @@ io.on('connection', (socket) => {
     );
     if (nearestPolice) {
       nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
+
+      // Notify the ambulance driver of the nearest traffic police location
+      socket.emit('policeLocation', {
+        lat: nearestPolice.lat,
+        lon: nearestPolice.lon,
+      });
     } else {
       console.error('No Traffic Police available to handle the emergency.');
     }
   });
 
+  // Traffic police marking traffic status (Clear or Not Clear)
+  socket.on('updateTrafficStatus', (data) => {
+    const { ambulanceId, status } = data;
+
+    // Find the corresponding ambulance
+    const ambulance = Object.values(connectedUsers).find(
+      (user) => user.role === 'Ambulance Driver' && user.id === ambulanceId
+    );
+
+    if (ambulance) {
+      ambulance.socket.emit('trafficStatusUpdate', { status });
+    } else {
+      console.error('Ambulance not found for traffic status update.');
+    }
+  });
+
+  // Update live location for ambulances or traffic police
+  socket.on('updateLocation', (data) => {
+    const { lat, lon } = data;
+    connectedUsers[socket.id].lat = lat;
+    connectedUsers[socket.id].lon = lon;
+
+    // Broadcast updated location to all connected users
+    socket.broadcast.emit('liveLocationUpdate', {
+      id: socket.id,
+      lat,
+      lon,
+      role: connectedUsers[socket.id].role,
+    });
+  });
+
+  // Handle user disconnection
   socket.on('disconnect', () => {
     console.log('User disconnected:', socket.id);
     delete connectedUsers[socket.id];
