@@ -208,7 +208,7 @@ function showEmergencyNotification(data) {
   alert(`Emergency from Ambulance ${data.licensePlate} at location: ${data.location}`);
 }
 
-
+let licensePlate = null; // Declare once in the outer scope.
  // Handle trafficStatus event
  socket.on('trafficStatus', (data) => {
   const { status, ambulanceId } = data;
