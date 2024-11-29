@@ -193,9 +193,7 @@ function displayTrafficStatus(status) {
       console.error('Traffic status element not found.');
   }
 }
-
-// Socket.IO event listener
-const socket = io(); // Ensure the socket instance is initialized
+// Ensure the socket instance is initialized
 socket.on('trafficStatusUpdate', (data) => {
   console.log('Received Traffic Status Update:', data); // Debugging
   displayTrafficStatus(data.status); // Call function to update the UI
