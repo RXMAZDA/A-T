@@ -136,22 +136,35 @@ let connectedUsers = {};  // Store connected users
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);
 
-  // Register user role (Ambulance Driver / Traffic Police)
+  // Single registerRole handler for both Ambulance Driver and Traffic Police
   socket.on('registerRole', (data) => {
+    console.log(`Registering role: ${data.role} for socket ID: ${socket.id}`);
+
+    // Store the role and data in the connectedUsers map
     connectedUsers[socket.id] = { ...data, socket };
-    console.log(`${data.role} registered: ${data.name}`);
+
+    if (data.role === 'Ambulance Driver') {
+      // Map the license plate to the socket ID for quick reference
+      ambulanceDriverSockets[data.licensePlate] = socket.id;
+      console.log(`Ambulance Driver registered: ${data.licensePlate} -> ${socket.id}`);
+    }
+
+    if (data.role === 'Traffic Police') {
+      console.log(`Traffic Police registered: ${data.name}`);
+    }
   });
 
-  // Handle emergency alerts from ambulance driver
+  // Handle emergency alerts from Ambulance Drivers
   socket.on('emergency', (data) => {
     const { licensePlate, location } = data;
     const nearestPolice = Object.values(connectedUsers).find(
       (user) => user.role === 'Traffic Police'
     );
+
     if (nearestPolice) {
       nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
 
-      // Notify the ambulance driver of the nearest traffic police location
+      // Notify the Ambulance Driver of the nearest Traffic Police location
       socket.emit('policeLocation', {
         lat: nearestPolice.lat,
         lon: nearestPolice.lon,
@@ -161,15 +174,7 @@ io.on('connection', (socket) => {
     }
   });
 
-  socket.on('registerRole', (data) => {
-    console.log(`Registering role: ${data.role} for socket ID: ${socket.id}`);
-    if (data.role === 'Ambulance Driver') {
-      // Store socket ID against the license plate
-      ambulanceDriverSockets[data.licensePlate] = socket.id;
-      console.log(`Ambulance Driver registered: ${data.licensePlate} -> ${socket.id}`);
-    }
-  });
-  
+  // Handle traffic status updates
   socket.on('trafficStatus', (data) => {
     const targetSocketId = ambulanceDriverSockets[data.ambulanceId];
     if (targetSocketId) {
@@ -179,27 +184,32 @@ io.on('connection', (socket) => {
       console.error(`Ambulance Driver with ID ${data.ambulanceId} is not connected.`);
     }
   });
-  
-  
-  
-  
-  // Update live location for ambulances or traffic police
+
+  // Update live location for all connected users
   socket.on('updateLocation', (data) => {
     const { lat, lon } = data;
-    connectedUsers[socket.id].lat = lat;
-    connectedUsers[socket.id].lon = lon;
+    if (connectedUsers[socket.id]) {
+      connectedUsers[socket.id].lat = lat;
+      connectedUsers[socket.id].lon = lon;
 
-    // Broadcast updated location to all connected users
-    socket.broadcast.emit('liveLocationUpdate', {
-      id: socket.id,
-      lat,
-      lon,
-      role: connectedUsers[socket.id].role,
-    });
+      // Broadcast updated location to all other users
+      socket.broadcast.emit('liveLocationUpdate', {
+        id: socket.id,
+        lat,
+        lon,
+        role: connectedUsers[socket.id].role,
+      });
+    }
   });
 
+  // Handle socket disconnection
   socket.on('disconnect', () => {
-    // Find and remove the disconnected socket from the mapping
+    console.log(`User disconnected: ${socket.id}`);
+
+    // Remove from connected users
+    delete connectedUsers[socket.id];
+
+    // Find and remove the disconnected Ambulance Driver
     for (const licensePlate in ambulanceDriverSockets) {
       if (ambulanceDriverSockets[licensePlate] === socket.id) {
         console.log(`Ambulance Driver disconnected: ${licensePlate}`);
@@ -208,7 +218,7 @@ io.on('connection', (socket) => {
       }
     }
   });
-  ;
+});
 
 // Start the server
 server.listen(PORT, '0.0.0.0', () => {
