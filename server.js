@@ -279,6 +279,26 @@ if (targetSocketId) {
   }
 });
 
+socket.on('sendNotification', (data) => {
+  const { licensePlate, phone, message } = data;
+
+  // Find the socket ID of the ambulance driver using the licensePlate or phone
+  const targetSocketId = Object.keys(connectedUsers).find(
+    (id) =>
+      connectedUsers[id].role === 'Ambulance Driver' &&
+      (connectedUsers[id].licensePlate === licensePlate || 
+       connectedUsers[id].phone === phone)
+  );
+
+  if (targetSocketId) {
+    io.to(targetSocketId).emit('receiveNotification', { message });
+    console.log(`Notification sent to ambulance driver (${licensePlate || phone}): ${message}`);
+  } else {
+    console.error(`No Ambulance Driver found for license plate ${licensePlate} or phone ${phone}`);
+  }
+});
+
+
 // Update live location for all connected users
 socket.on('updateLocation', (data) => {
   const { lat, lon } = data;
@@ -295,6 +315,8 @@ socket.on('updateLocation', (data) => {
     });
   }
 });
+
+
      // Handle driver disconnection
     socket.on('disconnect', () => {
         for (const [licensePlate, id] of Object.entries(ambulanceDriverSockets)) {
