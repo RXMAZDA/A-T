@@ -139,38 +139,61 @@ io.on('connection', (socket) => {
   socket.on('registerRole', (data) => {
     if (data.role === 'Ambulance Driver') {
       if (data.licensePlate) {
-        connectedUsers[socket.id] = { ...data, socket };  // Add user with role and license plate
+        connectedUsers[socket.id] = { ...data, socket };  // Add Ambulance Driver
         console.log(`Ambulance Driver registered: ${data.licensePlate}`);
       } else {
         console.error('Ambulance Driver registration failed: Missing license plate');
       }
     } else if (data.role === 'Traffic Police') {
-      connectedUsers[socket.id] = { ...data, socket };  // Add Traffic Police
+      connectedUsers[socket.id] = { ...data, socket, lat: data.lat, lon: data.lon };  // Ensure lat/lon are included
       console.log(`Traffic Police registered: ${data.name}`);
     }
   });
+  
   
 
   // Handle emergency alerts from Ambulance Drivers
   socket.on('emergency', (data) => {
     const { licensePlate, location } = data;
+  
+    // Log data for debugging purposes
+    console.log('Emergency data received:', { licensePlate, location });
+  
+    // Find the nearest Traffic Police
     const nearestPolice = Object.values(connectedUsers).find(
       (user) => user.role === 'Traffic Police'
     );
-
+  
     if (nearestPolice) {
+      // Send the emergency alert to the nearest Traffic Police
       nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
-
-      // Notify the Ambulance Driver of the nearest Traffic Police location
+      console.log('Emergency alert sent to Traffic Police:', nearestPolice.name);
+      
+      // Notify the Ambulance Driver of the Traffic Police location (if needed)
       socket.emit('policeLocation', {
         lat: nearestPolice.lat,
         lon: nearestPolice.lon,
       });
     } else {
       console.error('No Traffic Police available to handle the emergency.');
+      socket.emit('noPoliceAvailable', 'No Traffic Police available to handle the emergency.');
     }
   });
   
+  // Client-side (Traffic Police) listening for the emergency alert
+socket.on('emergencyAlert', (data) => {
+  console.log('Emergency alert received:', data);
+  
+  // Update UI or handle alert logic, e.g., show notification
+  showEmergencyNotification(data);  // Example function to show an alert in the UI
+});
+
+// Function to display emergency notification
+function showEmergencyNotification(data) {
+  alert(`Emergency from Ambulance ${data.licensePlate} at location: ${data.location}`);
+}
+
+
   //traffic status 
   socket.on('trafficStatus', (data) => {
     const { ambulanceLicensePlate, status } = data;
