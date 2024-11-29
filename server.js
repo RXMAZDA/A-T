@@ -160,22 +160,13 @@ io.on('connection', (socket) => {
     }
   });
 
-  // Traffic police marking traffic status (Clear or Not Clear)
-  socket.on('updateTrafficStatus', (data) => {
-    const { ambulanceId, status } = data;
-
-    // Find the corresponding ambulance
-    const ambulance = Object.values(connectedUsers).find(
-      (user) => user.role === 'Ambulance Driver' && user.id === ambulanceId
-    );
-
-    if (ambulance) {
-      ambulance.socket.emit('trafficStatusUpdate', { status });
-    } else {
-      console.error('Ambulance not found for traffic status update.');
-    }
+  socket.on('trafficStatus', (data) => {
+    console.log(`Traffic status update: ${data}`);
+    // Broadcast the update to the relevant ambulance driver
+    const ambulanceId = data.ambulanceId;
+    io.to(ambulanceId).emit('trafficStatusUpdate', { status: data.status });
   });
-
+  
   // Update live location for ambulances or traffic police
   socket.on('updateLocation', (data) => {
     const { lat, lon } = data;
