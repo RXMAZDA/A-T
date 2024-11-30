@@ -121,12 +121,10 @@ app.get('/route', async (req, res) => {
 
     const response = await axios.get(osrmUrl, { timeout: 10000 });
     if (response.data.routes.length > 0) {
-      const routes = response.data.routes.map(route => route.geometry);
-      res.status(200).send({ mainRoute: routes[0], alternateRoutes: routes.slice(1) });
+      res.status(200).send(response.data.routes[0].geometry);
     } else {
-      res.status(404).send({ error: 'No routes found' });
+      res.status(404).send({ error: 'No route found' });
     }
-    
   } catch (err) {
     res.status(500).send({ error: 'Error fetching route data' });
   }
@@ -152,21 +150,29 @@ io.on('connection', (socket) => {
       console.log(`Traffic Police registered: ${data.name}`);
     }
   });
- 
   
  // Store ambulance license plate during emergency
  socket.on('emergency', (data) => {
   const { licensePlate, location } = data;
 
-  if (!licensePlate) {
-    console.error('License plate not found.');
-    return;
+
+    // Log incoming data
+    console.log('Emergency received with license plate:', licensePlate);
+
+    if (connectedUsers[socket.id]) {
+      connectedUsers[socket.id].licensePlate = licensePlate;
+      console.log('Updated connectedUsers with license plate:', connectedUsers[socket.id]);
+  } else {
+      console.error('Ambulance Driver not found in connectedUsers for socket ID:', socket.id);
   }
 
-  console.log(`Emergency received with license plate: ${licensePlate}`);
 
+  if (!licensePlate) {
+    console.error('Emergency event missing license plate.');
+    return;
+}
 
-
+console.log(`Emergency received with license plate: ${licensePlate}`);
 
 
 
@@ -189,41 +195,6 @@ io.on('connection', (socket) => {
   }
 });
 
-
-socket.on('sendNotification', (data) => {
-  const { licensePlate, phone, message } = data;
-
-  // Find the socket ID of the ambulance driver using the licensePlate or phone
-  const targetSocketId = Object.keys(connectedUsers).find(
-    (id) =>
-      connectedUsers[id].role === 'Ambulance Driver' &&
-      (connectedUsers[id].licensePlate === licensePlate || 
-       connectedUsers[id].phone === phone)
-  );
-
-  if (targetSocketId) {
-    io.to(targetSocketId).emit('receiveNotification', { message });
-    console.log(`Notification sent to ambulance driver (${licensePlate || phone}): ${message}`);
-  } else {
-    console.error(`No Ambulance Driver found for license plate ${licensePlate} or phone ${phone}`);
-  }
-});
-// Update live location for all connected users
-socket.on('updateLocation', (data) => {
-  const { lat, lon } = data;
-  if (connectedUsers[socket.id]) {
-    connectedUsers[socket.id].lat = lat;
-    connectedUsers[socket.id].lon = lon;
-
-    // Broadcast updated location to all other users
-    socket.broadcast.emit('liveLocationUpdate', {
-      id: socket.id,
-      lat,
-      lon,
-      role: connectedUsers[socket.id].role,
-    });
-  }
-
   // Client-side (Traffic Police) listening for the emergency alert
 socket.on('emergencyAlert', (data) => {
   console.log('Emergency alert received:', data);
@@ -239,29 +210,38 @@ function showEmergencyNotification(data) {
 
 let licensePlate = null; // Declare once in the outer scope.
 
-socket.on('trafficStatus', (data) => {
-  const licensePlate = getLicensePlate(socket.id) || data.licensePlate;
-  if (!licensePlate) throw new Error('Missing license plate');
+ // Handle trafficStatus event
+ socket.on('trafficStatus', (data) => {
+  const { status, ambulanceId } = data;
 
-  const targetSocketId = Object.keys(connectedUsers).find(
-    (id) =>
-      connectedUsers[id].role === 'Ambulance Driver' &&
-      connectedUsers[id].licensePlate === licensePlate
-  );
+  
+      // Log incoming data
+      console.log('Received trafficStatus event with data:', data);
 
-  if (!targetSocketId) throw new Error(`Ambulance not connected: ${licensePlate}`);
-
-  io.to(targetSocketId).emit('trafficStatusUpdate', { status: data.status });
-  console.log(`Traffic status sent to ambulance: ${licensePlate}`);
-});
-
-// Reset the ambulance license plate after traffic status update
-socket.on('trafficStatusUpdate', () => {
-  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
-    delete connectedUsers[socket.id].licensePlate;
-    console.log('Ambulance license plate has been reset.');
+     // Retrieve the license plate from connectedUsers based on socket ID
+    let licensePlate = ambulanceId || (connectedUsers[socket.id] ? connectedUsers[socket.id].licensePlate : null);
+    
+    if (!licensePlate) {
+      console.error('Missing ambulance license plate in trafficStatus event after retrieval attempt.');
+      console.log('Connected users:', connectedUsers); // Log the current state of connectedUsers
+      return;
   }
-});
+
+   // Debugging logs
+  console.log('Received trafficStatus event with data:', data);
+  console.log('License plate in trafficStatus:', licensePlate);
+
+
+  if (!ambulanceId) {
+      console.error('Missing ambulance license plate in trafficStatus event');
+
+      // Retrieve the license plate from connectedUsers based on the socket ID
+      const ambulanceUser = connectedUsers[socket.id];
+      if (ambulanceUser && ambulanceUser.role === 'Ambulance Driver') {
+          licensePlate = ambulanceUser.licensePlate;
+          console.log('Retrieved license plate from connectedUsers:', licensePlate);
+      }
+  }
 
     
      // Find the ambulance driver's socket ID based on the license plate
@@ -291,27 +271,63 @@ if (targetSocketId) {
   console.log(`Traffic status sent to ambulance with license plate ${licensePlate}`);
 }
 
- 
-
-
-
-
-
-
-
-socket.on('disconnect', () => {
-  if (connectedUsers[socket.id]) {
-    console.log(`User disconnected: ${connectedUsers[socket.id].role}`);
-    delete connectedUsers[socket.id];
+ // Reset the ambulance license plate after traffic status update
+ socket.on('trafficStatusUpdate', () => {
+  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
+    delete connectedUsers[socket.id].licensePlate;  // Remove the license plate after status update
+    console.log('Ambulance license plate has been reset.');
   }
 });
+
+socket.on('sendNotification', (data) => {
+  const { licensePlate, phone, message } = data;
+
+  // Find the socket ID of the ambulance driver using the licensePlate or phone
+  const targetSocketId = Object.keys(connectedUsers).find(
+    (id) =>
+      connectedUsers[id].role === 'Ambulance Driver' &&
+      (connectedUsers[id].licensePlate === licensePlate || 
+       connectedUsers[id].phone === phone)
+  );
+
+  if (targetSocketId) {
+    io.to(targetSocketId).emit('receiveNotification', { message });
+    console.log(`Notification sent to ambulance driver (${licensePlate || phone}): ${message}`);
+  } else {
+    console.error(`No Ambulance Driver found for license plate ${licensePlate} or phone ${phone}`);
+  }
 });
 
-// Helper function to retrieve the license plate of the ambulance
-function getLicensePlate(socketId) {
-  const user = connectedUsers[socketId];
-  return user && user.role === 'Ambulance Driver' ? user.licensePlate : null;
-}
+
+// Update live location for all connected users
+socket.on('updateLocation', (data) => {
+  const { lat, lon } = data;
+  if (connectedUsers[socket.id]) {
+    connectedUsers[socket.id].lat = lat;
+    connectedUsers[socket.id].lon = lon;
+
+    // Broadcast updated location to all other users
+    socket.broadcast.emit('liveLocationUpdate', {
+      id: socket.id,
+      lat,
+      lon,
+      role: connectedUsers[socket.id].role,
+    });
+  }
+});
+
+
+     // Handle driver disconnection
+    socket.on('disconnect', () => {
+        for (const [licensePlate, id] of Object.entries(ambulanceDriverSockets)) {
+            if (id === socket.id) {
+                console.log(`Ambulance Driver disconnected: ${licensePlate}`);
+                console.log(`User disconnected: ${connectedUsers[socket.id].role} - ${connectedUsers[socket.id].licensePlate || 'No License Plate'}`);
+                delete ambulanceDriverSockets[licensePlate];
+            }
+        }
+    });
+});
 
 // Start the server
 server.listen(PORT, '0.0.0.0', () => {
