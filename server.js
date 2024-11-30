@@ -1,790 +1,326 @@
-import 'dart:convert';
-import 'dart:io';
-import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart'; // We are keeping this as you are using flutter_map, not Google Maps
-import 'package:geolocator/geolocator.dart';
-import 'package:http/http.dart' as http;
-import 'package:latlong2/latlong.dart';
-import 'package:socket_io_client/socket_io_client.dart' as IO;
-import 'package:permission_handler/permission_handler.dart';
+const express = require('express');
+const mongoose = require('mongoose');
+const { Server } = require('socket.io');
+const cors = require('cors');
+const axios = require('axios');
+const dotenv = require('dotenv');
+const NodeCache = require('node-cache');
+const fs = require('fs');
+const path = require('path');
+const ambulanceDriverSockets = {};
 
-const String baseUrl = 'https://a-t.onrender.com'; // Ensure this is correct
+// Import the User model
+const User = require('./models/User');
 
-void main() async {
-  WidgetsFlutterBinding.ensureInitialized();
-  await requestPermissions();
-  await testDNS();
+dotenv.config();
 
-  // Set up to ignore SSL certificate errors temporarily for debugging
-  HttpOverrides.global = MyHttpOverrides();
+const app = express();
+const PORT = process.env.PORT || 3000;  // Use Render's assigned PORT or 3000 for local testing
 
-  runApp(MyApp());
+// Check environment and decide between HTTP or HTTPS
+let server;
+if (process.env.NODE_ENV === 'production') {
+  // Production environment (use HTTPS)
+  const options = {
+    key: fs.readFileSync(path.join(__dirname, 'ssl', 'server-key.pem')), // Path to your server key
+    cert: fs.readFileSync(path.join(__dirname, 'ssl', 'server-cert.pem')), // Path to your server cert
+  };
+  server = require('https').createServer(options, app); // Create HTTPS server
+} else {
+  // Local development environment (use HTTP)
+  server = require('http').createServer(app); // Use HTTP server for local testing
 }
 
-class MyHttpOverrides extends HttpOverrides {
-  @override
-  HttpClient createHttpClient(SecurityContext? context) {
-    return super.createHttpClient(context)
-      ..badCertificateCallback = (X509Certificate cert, String host, int port) {
-        // Allow all certificates, this is for testing only.
-        return true;
-      };
-  }
-}
+// Socket.IO setup
+const io = new Server(server);
+const cache = new NodeCache({ stdTTL: 300 }); // Cache for 5 minutes
 
-Future<void> requestPermissions() async {
-  await [
-    Permission.location,
-    Permission.notification,
-  ].request();
-}
+// Health Check Endpoint for Render to use
+app.get('/health', (req, res) => res.status(200).send('Server is healthy'));
 
-Future<void> testDNS() async {
+// MongoDB connection setup
+mongoose
+  .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch((err) => console.error('MongoDB connection error:', err));
+
+// Middleware for CORS and JSON parsing
+app.use(express.json());
+app.use(
+  cors({
+    origin: [
+      'https://a-t.onrender.com', // Render app's URL
+      'http://localhost:3000', // Local development URL
+    ],
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    allowedHeaders: ['Content-Type', 'Authorization'],
+  })
+);
+
+// Routes
+
+// Route to register a user
+app.post('/register', async (req, res) => {
   try {
-    final result = await InternetAddress.lookup('a-t.onrender.com');
-    if (result.isNotEmpty && result[0].rawAddress.isNotEmpty) {
-      print('DNS resolved: ${result[0].address}');
-    }
-  } catch (e) {
-    print('DNS resolution failed: $e');
+    const user = new User(req.body);  // Create a new user instance from the request body
+    await user.save();  // Save the user to MongoDB
+    res.status(201).send({ message: 'Registration successful!' });
+  } catch (err) {
+    res.status(500).send({ error: err.message });
   }
-}
+});
 
-// Main entry point for the app
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Emergency Services',
-      theme: ThemeData(primarySwatch: Colors.blue),
-      home: HomePage(),
-    );
-  }
-}
-
-// HomePage widget, where users can register or log in
-class HomePage extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Emergency Services')),
-      body: Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            ElevatedButton(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => RegistrationPage()),
-              ),
-              child: const Text('Register'),
-            ),
-            ElevatedButton(
-              onPressed: () => Navigator.push(
-                context,
-                MaterialPageRoute(builder: (context) => LoginPage()),
-              ),
-              child: const Text('Login'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Registration page for users (Ambulance or Traffic Police)
-class RegistrationPage extends StatefulWidget {
-  @override
-  _RegistrationPageState createState() => _RegistrationPageState();
-}
-
-class _RegistrationPageState extends State<RegistrationPage> {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController phoneController = TextEditingController();
-  final TextEditingController licenseController = TextEditingController();
-  String? role;
-
-  Future<void> registerUser() async {
-    if (nameController.text.isEmpty ||
-        phoneController.text.isEmpty ||
-        role == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all required fields.')),
-      );
-      return;
-    }
-
-    try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/register'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'name': nameController.text,
-              'role': role,
-              'licensePlate':
-                  role == 'Ambulance Driver' ? licenseController.text : null,
-              'phone': phoneController.text,
-            }),
-          )
-          .timeout(const Duration(seconds: 25));
-
-      if (response.statusCode == 201) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Registration successful!')),
-        );
-        Navigator.pop(context);
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Registration failed: ${response.body}')),
-        );
-      }
-    } catch (e) {
-      print('Error: $e');
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Connection failed: $e')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Register')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: SingleChildScrollView(
-          child: Column(
-            children: [
-              TextField(
-                controller: nameController,
-                decoration: const InputDecoration(labelText: 'Name'),
-              ),
-              TextField(
-                controller: phoneController,
-                decoration: const InputDecoration(labelText: 'Phone'),
-                keyboardType: TextInputType.phone,
-              ),
-              DropdownButton<String>(
-                value: role,
-                hint: const Text('Select Role'),
-                items: ['Ambulance Driver', 'Traffic Police']
-                    .map((role) => DropdownMenuItem(
-                          value: role,
-                          child: Text(role),
-                        ))
-                    .toList(),
-                onChanged: (value) => setState(() => role = value),
-              ),
-              if (role == 'Ambulance Driver')
-                TextField(
-                  controller: licenseController,
-                  decoration: const InputDecoration(labelText: 'License Plate'),
-                ),
-              const SizedBox(height: 20),
-              ElevatedButton(
-                onPressed: registerUser,
-                child: const Text('Register'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// Login Page widget
-class LoginPage extends StatefulWidget {
-  @override
-  _LoginPageState createState() => _LoginPageState();
-}
-
-class _LoginPageState extends State<LoginPage> {
-  final TextEditingController nameController = TextEditingController();
-  final TextEditingController phoneController = TextEditingController();
-
-  Future<void> loginUser() async {
-    if (nameController.text.isEmpty || phoneController.text.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please fill all fields.')),
-      );
-      return;
-    }
-
-    try {
-      final response = await http
-          .post(
-            Uri.parse('$baseUrl/login'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({
-              'name': nameController.text,
-              'phone': phoneController.text,
-            }),
-          )
-          .timeout(const Duration(seconds: 25));
-
-      if (response.statusCode == 200) {
-        final user = jsonDecode(response.body);
-
-        if (user['role'] == 'Ambulance Driver') {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => AmbulanceDriverPage(user),
-            ),
-          );
-        } else {
-          Navigator.push(
-            context,
-            MaterialPageRoute(
-              builder: (context) => TrafficPolicePage(user),
-            ),
-          );
-        }
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Login failed: ${response.body}')),
-        );
-      }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Connection failed: $e')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Login')),
-      body: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          children: [
-            TextField(
-              controller: nameController,
-              decoration: const InputDecoration(labelText: 'Name'),
-            ),
-            TextField(
-              controller: phoneController,
-              decoration: const InputDecoration(labelText: 'Phone'),
-              keyboardType: TextInputType.phone,
-            ),
-            const SizedBox(height: 20),
-            ElevatedButton(
-              onPressed: loginUser,
-              child: const Text('Login'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// Ambulance Driver Page Widget
-class AmbulanceDriverPage extends StatefulWidget {
-  final Map<String, dynamic> user;
-
-  AmbulanceDriverPage(this.user);
-
-  @override
-  _AmbulanceDriverPageState createState() => _AmbulanceDriverPageState();
-}
-
-class _AmbulanceDriverPageState extends State<AmbulanceDriverPage> {
-  late IO.Socket socket;
-  Position? currentPosition;
-  List<Map<String, dynamic>> hospitals = [];
-  Map<String, dynamic>? selectedHospital;
-  List<LatLng> routeCoordinates = [];
-  bool isLoading = false;
-  String trafficStatus = ''; // Added to store traffic status
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeSocket();
-    _startLocationTracking();
-
-    // Listen for traffic status updates
-    socket.on('trafficStatusUpdate', (data) {
-      print('Traffic status update received: $data'); // Log incoming data
-      setState(() {
-        trafficStatus = 'Traffic status: ${data['status']}';
-      });
-
-      // Notify the user
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Traffic Status: ${data['status']}')),
-      );
-    });
-  }
-
-  void _initializeSocket() {
-    socket = IO.io(baseUrl, <String, dynamic>{
-      'transports': ['websocket'],
-      'secure': true,
-      'rejectUnauthorized': false,
+// Route to login a user
+app.post('/login', async (req, res) => {
+  try {
+    const user = await User.findOne({
+      name: req.body.name,
+      phone: req.body.phone,
     });
 
-    socket.onConnect((_) {
-      print('Connected to server as ambulance driver');
-      socket.emit('registerRole', {
-        'name': widget.user['name'],
-        'role': 'Ambulance Driver',
-        'licensePlate': widget.user['licensePlate'],
-        'phone': widget.user['phone'],
-      });
-    });
-    socket.on('receiveNotification', (data) {
-      print('Notification received: ${data['message']}');
-      setState(() {
-        trafficStatus =
-            data['message']; // Update trafficStatus for display if needed.
-      });
+    if (!user) {
+      return res.status(404).send({ error: 'User not found!' });
+    }
 
-      // Display the notification as a popup
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(data['message'])),
-      );
-    });
+    res.status(200).send(user);  // Send the user data back if login is successful
+  } catch (err) {
+    res.status(500).send({ error: err.message });
   }
+});
 
-  // Start tracking the ambulance driver's location
-  void _startLocationTracking() async {
-    LocationPermission permission = await Geolocator.checkPermission();
-    if (permission == LocationPermission.denied) {
-      permission = await Geolocator.requestPermission();
-    }
+// Route to fetch hospitals near a location
+app.get('/hospitals', async (req, res) => {
+  try {
+    const { lat, lon } = req.query;
+    const cacheKey = `hospitals_${lat}_${lon}`;
+    const cachedData = cache.get(cacheKey);
 
-    if (permission == LocationPermission.deniedForever ||
-        permission == LocationPermission.denied) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Location permissions are required.")),
-      );
-      return;
-    }
+    if (cachedData) return res.status(200).send(cachedData);
 
-    // Use high accuracy settings
-    Geolocator.getPositionStream(
-      locationSettings: LocationSettings(
-        accuracy: LocationAccuracy.best, // Use the most accurate setting
-        distanceFilter: 5, // Update every 5 meters
-      ),
-    ).listen((Position position) {
-      setState(() {
-        currentPosition = position;
-      });
-      _fetchNearbyHospitals(); // Refresh hospital data
-    });
+    const overpassUrl = `https://overpass-api.de/api/interpreter?data=[out:json];node(around:5000,${lat},${lon})[amenity=hospital];out;`;
+    const response = await axios.get(overpassUrl, { timeout: 10000 });
+
+    const hospitals = response.data.elements.map((el) => ({
+      name: el.tags.name || 'Unknown',
+      lat: el.lat,
+      lon: el.lon,
+    }));
+
+    cache.set(cacheKey, hospitals);  // Cache the hospital data
+    res.status(200).send(hospitals);
+  } catch (err) {
+    res.status(500).send({ error: 'Error fetching hospitals data' });
   }
+});
 
-  // Fetch nearby hospitals from the backend
-  Future<void> _fetchNearbyHospitals() async {
-    if (currentPosition == null) return;
+// Route to get directions (via OSRM)
+app.get('/route', async (req, res) => {
+  try {
+    const { startLat, startLon, endLat, endLon } = req.query;
+    const osrmUrl = `http://router.project-osrm.org/route/v1/driving/${startLon},${startLat};${endLon},${endLat}?overview=full&geometries=geojson`;
 
-    try {
-      final response = await http.get(Uri.parse(
-          '$baseUrl/hospitals?lat=${currentPosition!.latitude}&lon=${currentPosition!.longitude}'));
-
-      if (response.statusCode == 200) {
-        final fetchedHospitals =
-            List<Map<String, dynamic>>.from(jsonDecode(response.body));
-
-        if (fetchedHospitals.isNotEmpty) {
-          final nearest = fetchedHospitals.reduce((current, next) {
-            final currentDistance = Geolocator.distanceBetween(
-              currentPosition!.latitude,
-              currentPosition!.longitude,
-              current['lat'],
-              current['lon'],
-            );
-            final nextDistance = Geolocator.distanceBetween(
-              currentPosition!.latitude,
-              currentPosition!.longitude,
-              next['lat'],
-              next['lon'],
-            );
-            return currentDistance < nextDistance ? current : next;
-          });
-
-          setState(() {
-            hospitals = fetchedHospitals;
-            selectedHospital = nearest;
-          });
-
-          _fetchRouteToHospital();
-        }
-      } else {
-        throw Exception('Failed to fetch hospitals');
-      }
-    } catch (e) {
-      print('Error fetching hospitals: $e');
-    }
-  }
-
-  List<List<LatLng>> alternateRoutes = []; // List of alternate routes
-  int currentRouteIndex = 0; // Keeps track of the active route
-
-  Future<void> _fetchRouteToHospital() async {
-    if (currentPosition == null || selectedHospital == null) return;
-
-    try {
-      final response = await http.get(Uri.parse(
-          '$baseUrl/route?startLat=${currentPosition!.latitude}&startLon=${currentPosition!.longitude}&endLat=${selectedHospital!['lat']}&endLon=${selectedHospital!['lon']}'));
-
-      if (response.statusCode == 200) {
-        final routeGeoJson = jsonDecode(response.body);
-
-        setState(() {
-          // Set main route
-          routeCoordinates = (routeGeoJson['mainRoute']['coordinates'] as List)
-              .map((point) => LatLng(point[1], point[0]))
-              .toList();
-
-          // Set alternative routes
-          alternateRoutes =
-              (routeGeoJson['alternateRoutes'] as List).map((route) {
-            return (route['coordinates'] as List)
-                .map((point) => LatLng(point[1], point[0]))
-                .toList();
-          }).toList();
-          currentRouteIndex = 0; // Reset the route index
-        });
-      } else {
-        throw Exception('Failed to fetch routes');
-      }
-    } catch (e) {
-      print('Error fetching routes: $e');
-    }
-  }
-
-  void _switchRoute() {
-    if (alternateRoutes.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No alternate routes available')),
-      );
-      return;
-    }
-
-    // Cycle through alternate routes
-    setState(() {
-      currentRouteIndex = (currentRouteIndex + 1) % alternateRoutes.length;
-      routeCoordinates = alternateRoutes[currentRouteIndex];
-    });
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Switched to an alternate route')),
-    );
-  }
-
-  // Implement switch next nearest hospital functionality
-  // Switch Next Nearest Hospital Logic
-  void _switchNextNearestHospital() async {
-    if (hospitals.isEmpty || currentPosition == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-            content: Text('No alternative hospitals or routes available')),
-      );
-      return;
-    }
-
-    // Remove the currently selected hospital from the list of hospitals
-    hospitals.removeWhere((hospital) =>
-        hospital['lat'] == selectedHospital?['lat'] &&
-        hospital['lon'] == selectedHospital?['lon']);
-
-    if (hospitals.isNotEmpty) {
-      // Select the next nearest hospital
-      final nextHospital = hospitals.reduce((current, next) {
-        final currentDistance = Geolocator.distanceBetween(
-          currentPosition!.latitude,
-          currentPosition!.longitude,
-          current['lat'],
-          current['lon'],
-        );
-        final nextDistance = Geolocator.distanceBetween(
-          currentPosition!.latitude,
-          currentPosition!.longitude,
-          next['lat'],
-          next['lon'],
-        );
-        return nextDistance < currentDistance ? next : current;
-      });
-
-      setState(() {
-        selectedHospital = nextHospital;
-      });
-
-      // Fetch the route to the new hospital
-      await _fetchRouteToHospital();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-            content: Text(
-                'Switched to the next nearest hospital: ${nextHospital['name']}')),
-      );
+    const response = await axios.get(osrmUrl, { timeout: 10000 });
+    if (response.data.routes.length > 0) {
+      const routes = response.data.routes.map(route => route.geometry);
+      res.status(200).send({ mainRoute: routes[0], alternateRoutes: routes.slice(1) });
     } else {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('No alternative hospitals available')),
-      );
+      res.status(404).send({ error: 'No routes found' });
     }
+    
+  } catch (err) {
+    res.status(500).send({ error: 'Error fetching route data' });
+  }
+});
+
+// Socket.IO Events
+let connectedUsers = {};  // Store connected users
+
+io.on('connection', (socket) => {
+  console.log('User connected:', socket.id);
+
+  socket.on('registerRole', (data) => {
+    console.log('Registering user:', data);  // Add this line to see incoming user data
+    if (data.role === 'Ambulance Driver') {
+      if (data.licensePlate) {
+        connectedUsers[socket.id] = { ...data, socket };  // Add Ambulance Driver
+        console.log(`Ambulance Driver registered: ${data.licensePlate}`);
+      } else {
+        console.error('Ambulance Driver registration failed: Missing license plate');
+      }
+    } else if (data.role === 'Traffic Police') {
+      connectedUsers[socket.id] = { ...data, socket, lat: data.lat, lon: data.lon };  // Ensure lat/lon are included
+      console.log(`Traffic Police registered: ${data.name}`);
+    }
+  });
+  function getLicensePlate(socketId) {
+    const user = connectedUsers[socketId];
+    return user && user.role === 'Ambulance Driver' ? user.licensePlate : null;
+  }
+  
+ // Store ambulance license plate during emergency
+ socket.on('emergency', (data) => {
+  const { location } = data;
+
+
+    // Log incoming data
+    console.log('Emergency received with license plate:', licensePlate);
+
+    if (connectedUsers[socket.id]) {
+      connectedUsers[socket.id].licensePlate = licensePlate;
+      console.log('Updated connectedUsers with license plate:', connectedUsers[socket.id]);
+  } else {
+      console.error('Ambulance Driver not found in connectedUsers for socket ID:', socket.id);
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Ambulance Driver')),
-      body: currentPosition == null
-          ? const Center(child: CircularProgressIndicator())
-          : Column(
-              children: [
-                if (trafficStatus.isNotEmpty)
-                  Padding(
-                    padding: const EdgeInsets.all(8.0),
-                    child: Container(
-                      padding: EdgeInsets.all(10),
-                      color: Colors.orangeAccent,
-                      child: Text(
-                        trafficStatus != null
-                            ? trafficStatus
-                            : 'No traffic status available',
-                        style: TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                  ),
-                Expanded(
-                  flex: 3,
-                  child: FlutterMap(
-                    options: MapOptions(
-                      center: LatLng(
-                          currentPosition!.latitude,
-                          currentPosition!
-                              .longitude), // Corrected from "Center" to "center"
-                      zoom: 15.0,
-                    ),
-                    children: [
-                      TileLayer(
-                        urlTemplate:
-                            'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                        subdomains: ['a', 'b', 'c'],
-                      ),
-                      MarkerLayer(
-                        markers: [
-                          Marker(
-                            point: LatLng(currentPosition!.latitude,
-                                currentPosition!.longitude),
-                            width: 40, // Specify width
-                            height: 40, // Specify height
-                            builder: (ctx) => const Icon(
-                              Icons.location_pin,
-                              color: Colors.red,
-                              size: 40,
-                            ),
-                          ),
-                          if (selectedHospital != null)
-                            Marker(
-                              point: LatLng(selectedHospital!['lat'],
-                                  selectedHospital!['lon']),
-                              width: 40, // Specify width
-                              height: 40, // Specify height
-                              builder: (ctx) => const Icon(
-                                Icons.local_hospital,
-                                color: Colors.blue,
-                                size: 40,
-                              ),
-                            ),
-                        ],
-                      ),
-                      PolylineLayer(
-                        polylines: [
-                          Polyline(
-                            points: routeCoordinates,
-                            strokeWidth: 4.0,
-                            color: Colors.blue,
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                  children: [
-                    ElevatedButton(
-                      onPressed: _switchRoute,
-                      child: const Text('Switch Route'),
-                    ),
-                    ElevatedButton(
-                      onPressed: _switchNextNearestHospital,
-                      child: const Text('Switch Next Nearest Hospital'),
-                    ),
-                  ],
-                ),
-                ElevatedButton(
-                  onPressed: _sendEmergencyAlert,
-                  child: const Text('Send Emergency Alert'),
-                ),
-              ],
-            ),
+  const licensePlate = data.licensePlate || getLicensePlate(socket.id);
+  if (!licensePlate) {
+    console.error('License plate not found.');
+    return;
+  }
+  
+
+console.log(`Emergency received with license plate: ${licensePlate}`);
+
+
+
+  const nearestPolice = Object.values(connectedUsers).find(
+    (user) => user.role === 'Traffic Police'
+  );
+
+  if (nearestPolice) {
+    nearestPolice.socket.emit('emergencyAlert', { licensePlate, location });
+  
+        console.log(`Emergency alert sent to Traffic Police: ${nearestPolice.name}`);
+
+        // Notify the Ambulance Driver of the nearest Traffic Police location
+    socket.emit('policeLocation', {
+      lat: nearestPolice.lat,
+      lon: nearestPolice.lon,
+    });
+  } else {
+    console.error('No Traffic Police available to handle the emergency.');
+  }
+});
+
+  // Client-side (Traffic Police) listening for the emergency alert
+socket.on('emergencyAlert', (data) => {
+  console.log('Emergency alert received:', data);
+  
+  // Update UI or handle alert logic, e.g., show notification
+  showEmergencyNotification(data);  // Example function to show an alert in the UI
+});
+
+// Function to display emergency notification
+function showEmergencyNotification(data) {
+  alert(`Emergency from Ambulance ${data.licensePlate} at location: ${data.location}`);
+}
+
+let licensePlate = null; // Declare once in the outer scope.
+
+socket.on('trafficStatus', (data) => {
+  try {
+    const licensePlate = getLicensePlate(socket.id) || data.licensePlate;
+    if (!licensePlate) throw new Error('Missing license plate');
+
+    const targetSocketId = Object.keys(connectedUsers).find(
+      (id) =>
+        connectedUsers[id].role === 'Ambulance Driver' &&
+        connectedUsers[id].licensePlate === licensePlate
     );
+
+    if (!targetSocketId) throw new Error(`Ambulance not connected: ${licensePlate}`);
+
+    io.to(targetSocketId).emit('trafficStatusUpdate', { status: data.status });
+    console.log(`Traffic status sent to ambulance: ${licensePlate}`);
+  } catch (err) {
+    console.error(`Error in trafficStatus handler: ${err.message}`);
   }
+});
 
-  void _sendEmergencyAlert() {
-    if (currentPosition != null && selectedHospital != null) {
-      socket.emit('emergency', {
-        'licensePlate': widget.user['licensePlate'],
-        'location': {
-          'lat': currentPosition!.latitude,
-          'lon': currentPosition!.longitude,
-        },
-        'hospital': selectedHospital,
-      });
 
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Emergency alert sent!')),
-      );
-    }
-  }
-}
-
-class TrafficPolicePage extends StatefulWidget {
-  final Map<String, dynamic> user;
-
-  TrafficPolicePage(this.user);
-
-  @override
-  _TrafficPolicePageState createState() => _TrafficPolicePageState();
-}
-
-class _TrafficPolicePageState extends State<TrafficPolicePage> {
-  late IO.Socket socket;
-  Map<String, dynamic>? emergencyDetails;
-  bool isLoading = false;
-  LatLng? ambulanceLocation; // Store the ambulance's location
-
-  @override
-  void initState() {
-    super.initState();
-    _initializeSocket();
-  }
-
-  void _initializeSocket() {
-    socket = IO.io(baseUrl, <String, dynamic>{
-      'transports': ['websocket'],
-      'secure': true,
-      'rejectUnauthorized': false,
-    });
-
-    socket.onConnect((_) {
-      print('Connected to server as traffic police');
-      socket.emit('registerRole', {
-        'name': widget.user['name'],
-        'role': 'Traffic Police',
-        'phone': widget.user['phone'],
-      });
-    });
-
-    socket.on('emergencyAlert', (data) {
-      print(
-          'Emergency Alert Received: $data'); // Check if licensePlate is present.
-      setState(() {
-        emergencyDetails = data;
-        ambulanceLocation =
-            LatLng(data['location']['lat'], data['location']['lon']);
-        isLoading = false;
-      });
-    });
-
-    socket.onDisconnect((_) => print('Disconnected from server'));
-  }
-
-  void _sendNotification(String status) {
-    if (emergencyDetails != null) {
-      socket.emit('sendNotification', {
-        'licensePlate':
-            emergencyDetails!['licensePlate'], // Specify the target ambulance.
-        'phone':
-            emergencyDetails!['phone'], // Optionally include the phone number.
-        'message': 'Traffic is $status.', // Notification message.
-      });
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Notification sent: Traffic is $status.')),
-      );
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: const Text('Traffic Police')),
-      body: isLoading
-          ? const Center(child: CircularProgressIndicator())
-          : emergencyDetails == null
-              ? const Center(child: Text('No emergencies reported.'))
-              : Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text(
-                        'Ambulance License Plate: ${emergencyDetails?['licensePlate'] ?? 'Unknown'}',
-                        style: const TextStyle(
-                            fontSize: 18, fontWeight: FontWeight.bold),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Text(
-                        'Ambulance Location: ${emergencyDetails?['location']?['lat'] ?? 'Unknown'}, '
-                        '${emergencyDetails?['location']?['lon'] ?? 'Unknown'}',
-                        style: const TextStyle(fontSize: 16),
-                      ),
-                    ),
-                    Expanded(
-                      child: FlutterMap(
-                        options: MapOptions(
-                          center: ambulanceLocation ?? LatLng(0, 0),
-                          zoom: 15.0,
-                        ),
-                        children: [
-                          TileLayer(
-                            urlTemplate:
-                                'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',
-                            subdomains: ['a', 'b', 'c'],
-                          ),
-                          MarkerLayer(
-                            markers: [
-                              if (ambulanceLocation != null)
-                                Marker(
-                                  point: ambulanceLocation!,
-                                  width: 40,
-                                  height: 40,
-                                  builder: (ctx) => const Icon(
-                                    Icons.local_hospital,
-                                    color: Colors.blue,
-                                    size: 40,
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => _sendNotification('Clear'),
-                      child: const Text('Mark Traffic Clear'),
-                    ),
-                    ElevatedButton(
-                      onPressed: () => _sendNotification('Not Clear'),
-                      child: const Text('Mark Traffic Not Clear'),
-                    ),
-                  ],
-                ),
+    
+     // Find the ambulance driver's socket ID based on the license plate
+    const targetSocketId = Object.keys(connectedUsers).find(
+        (id) =>
+            connectedUsers[id].role === 'Ambulance Driver' &&
+            connectedUsers[id].licensePlate === licensePlate
     );
+
+  if (targetSocketId) {
+    io.to(targetSocketId).emit('trafficStatusUpdate', { status });
+    console.log(`Traffic status sent to ambulance with license plate ${data.licensePlate}`);
+  } else {
+    console.error(`Ambulance Driver with license plate ${data.licensePlate} is not connected.`);
   }
+});
+
+  
+const targetSocketId = Object.keys(connectedUsers).find(
+  (id) =>
+    connectedUsers[id].role === 'Ambulance Driver' &&
+    connectedUsers[id].licensePlate === licensePlate
+);
+
+if (targetSocketId) {
+  io.to(targetSocketId).emit('trafficStatusUpdate', { status });
+  console.log(`Traffic status sent to ambulance with license plate ${licensePlate}`);
 }
+
+ // Reset the ambulance license plate after traffic status update
+ socket.on('trafficStatusUpdate', () => {
+  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
+    delete connectedUsers[socket.id].licensePlate;  // Remove the license plate after status update
+    console.log('Ambulance license plate has been reset.');
+  }
+});
+
+socket.on('sendNotification', (data) => {
+  const { licensePlate, phone, message } = data;
+
+  // Find the socket ID of the ambulance driver using the licensePlate or phone
+  const targetSocketId = Object.keys(connectedUsers).find(
+    (id) =>
+      connectedUsers[id].role === 'Ambulance Driver' &&
+      (connectedUsers[id].licensePlate === licensePlate || 
+       connectedUsers[id].phone === phone)
+  );
+
+  if (targetSocketId) {
+    io.to(targetSocketId).emit('receiveNotification', { message });
+    console.log(`Notification sent to ambulance driver (${licensePlate || phone}): ${message}`);
+  } else {
+    console.error(`No Ambulance Driver found for license plate ${licensePlate} or phone ${phone}`);
+  }
+});
+
+
+// Update live location for all connected users
+socket.on('updateLocation', (data) => {
+  const { lat, lon } = data;
+  if (connectedUsers[socket.id]) {
+    connectedUsers[socket.id].lat = lat;
+    connectedUsers[socket.id].lon = lon;
+
+    // Broadcast updated location to all other users
+    socket.broadcast.emit('liveLocationUpdate', {
+      id: socket.id,
+      lat,
+      lon,
+      role: connectedUsers[socket.id].role,
+    });
+  }
+});
+
+
+socket.on('disconnect', () => {
+  if (connectedUsers[socket.id]) {
+    console.log(`User disconnected: ${connectedUsers[socket.id].role}`);
+    delete connectedUsers[socket.id];
+  }
+});
+
+
+// Start the server
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`Server running on port ${PORT}`);
+});
