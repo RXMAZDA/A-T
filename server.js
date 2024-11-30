@@ -208,6 +208,21 @@ socket.on('sendNotification', (data) => {
     console.error(`No Ambulance Driver found for license plate ${licensePlate} or phone ${phone}`);
   }
 });
+// Update live location for all connected users
+socket.on('updateLocation', (data) => {
+  const { lat, lon } = data;
+  if (connectedUsers[socket.id]) {
+    connectedUsers[socket.id].lat = lat;
+    connectedUsers[socket.id].lon = lon;
+
+    // Broadcast updated location to all other users
+    socket.broadcast.emit('liveLocationUpdate', {
+      id: socket.id,
+      lat,
+      lon,
+      role: connectedUsers[socket.id].role,
+    });
+  }
 
   // Client-side (Traffic Police) listening for the emergency alert
 socket.on('emergencyAlert', (data) => {
@@ -280,21 +295,7 @@ if (targetSocketId) {
 
 
 
-// Update live location for all connected users
-socket.on('updateLocation', (data) => {
-  const { lat, lon } = data;
-  if (connectedUsers[socket.id]) {
-    connectedUsers[socket.id].lat = lat;
-    connectedUsers[socket.id].lon = lon;
 
-    // Broadcast updated location to all other users
-    socket.broadcast.emit('liveLocationUpdate', {
-      id: socket.id,
-      lat,
-      lon,
-      role: connectedUsers[socket.id].role,
-    });
-  }
 
 
 
