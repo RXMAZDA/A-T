@@ -237,7 +237,13 @@ socket.on('trafficStatus', (data) => {
   }
 });
 
-
+ // Reset the ambulance license plate after traffic status update
+ socket.on('trafficStatusUpdate', () => {
+  if (connectedUsers[socket.id] && connectedUsers[socket.id].role === 'Ambulance Driver') {
+    delete connectedUsers[socket.id].licensePlate;  // Remove the license plate after status update
+    console.log('Ambulance license plate has been reset.');
+  }
+});
     
      // Find the ambulance driver's socket ID based on the license plate
     const targetSocketId = Object.keys(connectedUsers).find(
